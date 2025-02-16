@@ -1,0 +1,11 @@
+[package]
+name = "mallowbtc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitcoin = { version = "0.32.5", features = ["rand-std"] }
+bdk_wallet = "1.1.0"
+miniscript = "12.3.0"
+thiserror = "2.0.11"
+hex = "0.4.3"
