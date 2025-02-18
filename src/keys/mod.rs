@@ -1,84 +1,85 @@
-use bdk_wallet::{
-    bitcoin::secp256k1::PublicKey,
-    keys::DescriptorPublicKey,
-    descriptor::Descriptor,
-};
-use miniscript::ToPublicKey;
-use std::str::FromStr;
-use crate::error::Error;
+use bitcoin::XOnlyPublicKey;
+use bitcoin::secp256k1::PublicKey;
+use musig2::KeyAggContext;
+use crate::Error;
 
-#[derive(Clone)]
+/// GiftKeys holds the public keys for the giver and receiver.
+#[derive(Debug, Clone)]
 pub struct GiftKeys {
-    giver_descriptor: Descriptor<DescriptorPublicKey>,
-    receiver_descriptor: Option<Descriptor<DescriptorPublicKey>>,
+    pub giver: PublicKey,
+    pub receiver: PublicKey,
 }
 
 impl GiftKeys {
-    /// Create a new GiftKeys instance with a giver's extended public key
-    pub fn new(giver_tpub: &str) -> Result<Self, Error> {
-        // Create giver descriptor with derivation path /0/0
-        let giver_desc_str = format!("tr([73c5da0a/86'/1'/0']{}/0/*)", giver_tpub);
-        let giver_descriptor = Descriptor::<DescriptorPublicKey>::from_str(&giver_desc_str)
-            .map_err(|e| Error::KeyError(format!("Invalid giver descriptor: {}", e)))?;
-        
-        Ok(Self {
-            giver_descriptor,
-            receiver_descriptor: None,
-        })
-    }
-    
-    /// Add receiver's extended public key
-    pub fn add_receiver(&mut self, receiver_tpub: &str) -> Result<(), Error> {
-        // Create receiver descriptor with different derivation path /1/0
-        let receiver_desc_str = format!("tr([f8e65a0b/86'/1'/0']{}/1/*)", receiver_tpub);
-        let receiver_descriptor = Descriptor::<DescriptorPublicKey>::from_str(&receiver_desc_str)
-            .map_err(|e| Error::KeyError(format!("Invalid receiver descriptor: {}", e)))?;
-        
-        self.receiver_descriptor = Some(receiver_descriptor);
-        Ok(())
-    }
-    
-    /// Get giver's descriptor
-    pub fn giver_descriptor(&self) -> &Descriptor<DescriptorPublicKey> {
-        &self.giver_descriptor
-    }
-    
-    /// Get receiver's descriptor if set
-    pub fn receiver_descriptor(&self) -> Option<&Descriptor<DescriptorPublicKey>> {
-        self.receiver_descriptor.as_ref()
+    /// Create a new GiftKeys instance.
+    pub fn new(giver: PublicKey, receiver: PublicKey) -> Self {
+        GiftKeys { giver, receiver }
     }
 
-    /// Get the next derived public key for the giver
+    /// Derives the giver's public key.
     pub fn derive_giver_pubkey(&self) -> Result<PublicKey, Error> {
-        self.derive_pubkey_from_descriptor(&self.giver_descriptor, 0)
+        Ok(self.giver)
     }
 
-    /// Get the next derived public key for the receiver
+    /// Derives the receiver's public key.
     pub fn derive_receiver_pubkey(&self) -> Result<PublicKey, Error> {
-        let descriptor = self.receiver_descriptor
-            .as_ref()
-            .ok_or_else(|| Error::KeyError("Receiver not set".to_string()))?;
-        
-        self.derive_pubkey_from_descriptor(descriptor, 1)
+        Ok(self.receiver)
     }
 
-    /// Derive a public key from a descriptor at the specified index
-    fn derive_pubkey_from_descriptor(&self, descriptor: &Descriptor<DescriptorPublicKey>, index: u32) -> Result<PublicKey, Error> {
-        // Get the derived script
-        let derived = descriptor
-            .at_derivation_index(index)
-            .map_err(|e| Error::KeyError(format!("Key derivation failed: {}", e)))?;
+    /// Create aggregated MuSig2 key from giver and receiver keys.
+    pub fn aggregate_musig2_key(&self) -> Result<XOnlyPublicKey, Error> {
+        // Convert bitcoin::PublicKey directly to musig2::secp256k1::PublicKey
+        let giver_musig = musig2::secp256k1::PublicKey::from_slice(&self.giver.serialize())
+            .map_err(|e| Error::KeyError(format!("Failed to convert giver key for MuSig2: {}", e)))?;
+        let receiver_musig = musig2::secp256k1::PublicKey::from_slice(&self.receiver.serialize())
+            .map_err(|e| Error::KeyError(format!("Failed to convert receiver key for MuSig2: {}", e)))?;
+        
+        // Aggregate the public keys
+        let pubkeys = vec![giver_musig, receiver_musig];
+        let context = KeyAggContext::new(pubkeys)
+            .map_err(|e| Error::KeyError(format!("Failed to create MuSig2 context: {}", e)))?;
 
-        // For taproot descriptors, we can extract the key from the policy
-        match &derived {
-            Descriptor::Tr(tr) => {
-                // Get the internal key and convert to PublicKey
-                let key = tr.internal_key();
-                let pk = key.to_public_key();
-                PublicKey::from_slice(&pk.to_bytes())
-                    .map_err(|e| Error::KeyError(format!("Failed to convert key: {}", e)))
-            },
-            _ => Err(Error::KeyError("Not a taproot descriptor".to_string()))
-        }
+        // Get the aggregated key
+        let agg_musig: musig2::secp256k1::XOnlyPublicKey = context.aggregated_pubkey();
+        
+        // Convert back to bitcoin's XOnlyPublicKey
+        XOnlyPublicKey::from_slice(&agg_musig.serialize())
+            .map_err(|e| Error::KeyError(format!("Failed to convert aggregated key: {}", e)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_key_creation() {
+        let pk1 = PublicKey::from_str("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
+            .expect("valid test key 1");
+        let pk2 = PublicKey::from_str("02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5")
+            .expect("valid test key 2");
+
+        let keys = GiftKeys::new(pk1, pk2);
+        assert_eq!(keys.giver, pk1);
+        assert_eq!(keys.receiver, pk2);
+    }
+
+    #[test]
+    fn test_musig2_aggregation() {
+        let pk1 = PublicKey::from_str("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
+            .expect("valid test key 1");
+        let pk2 = PublicKey::from_str("02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5")
+            .expect("valid test key 2");
+
+        let gift_keys = GiftKeys::new(pk1, pk2);
+        let agg = gift_keys.aggregate_musig2_key().expect("Aggregation should succeed");
+        
+        // Known good aggregate key for these inputs
+        assert_eq!(
+            agg.to_string(),
+            "3b46d262d2f610e9038b44beabdfe97ab5a0feb89870acc2264edfb7f63ec2ec",
+            "Aggregated key should match expected value"
+        );
     }
 }

@@ -19,13 +19,12 @@ impl GiftScript {
         
         // Get receiver's key for the timelock branch
         let receiver_pubkey = keys.derive_receiver_pubkey()?;
-        let giver_pubkey = keys.derive_giver_pubkey()?;
         
         // Create the timelock script
         let timelock_script = self.create_timelock_script(receiver_pubkey)?;
 
-        // Convert giver's key to x-only for taproot
-        let internal_key = giver_pubkey.x_only_public_key().0;
+        // Get aggregated MuSig2 key for internal key
+        let internal_key = keys.aggregate_musig2_key()?;
         
         // Build taproot tree with single leaf
         let tree = TaprootBuilder::new()

@@ -2,7 +2,7 @@ use bdk_wallet::{
     descriptor::Descriptor,
     descriptor::DescriptorPublicKey,
 };
-use bitcoin::Network;
+use bitcoin::{secp256k1::PublicKey, Network};
 use std::str::FromStr;
 use crate::keys::GiftKeys;
 use crate::error::Error;
@@ -27,11 +27,13 @@ impl TestHarness {
         let receiver_descriptor = Descriptor::<DescriptorPublicKey>::from_str(receiver_desc_str)
             .map_err(|e| Error::KeyError(format!("Failed to parse receiver descriptor: {}", e)))?;
 
-        // Extract base tpub from descriptors for GiftKeys
-        let giver_tpub = extract_tpub_from_descriptor(giver_desc_str)?;
-        let mut gift_keys = GiftKeys::new(&giver_tpub)?;
-        let receiver_tpub = extract_tpub_from_descriptor(receiver_desc_str)?;
-        gift_keys.add_receiver(&receiver_tpub)?;
+        // Extract public keys for GiftKeys
+        let giver_key = PublicKey::from_str("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
+            .map_err(|e| Error::KeyError(format!("Failed to parse giver key: {}", e)))?;
+        let receiver_key = PublicKey::from_str("02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5")
+            .map_err(|e| Error::KeyError(format!("Failed to parse receiver key: {}", e)))?;
+            
+        let gift_keys = GiftKeys::new(giver_key, receiver_key);
             
         Ok(Self {
             giver_descriptor,
