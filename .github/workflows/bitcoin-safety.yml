@@ -1,0 +1,31 @@
+name: Bitcoin Safety
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  safety:
+    name: Bitcoin safety checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      # Check for mainnet constants
+      - name: Check network constants
+        run: |
+          ! grep -r "Network::Bitcoin" . || (echo "WARNING: Mainnet usage detected!" && exit 1)
+          
+      # Ensure test vectors are for testnet/regtest
+      - name: Check test vectors
+        run: |
+          ! grep -r "\"xpub" . || (echo "WARNING: Mainnet xpub detected!" && exit 1)
+          ! grep -r "\"bc1" . || (echo "WARNING: Mainnet address detected!" && exit 1)
+          
+      # Add security advisories check
+      - name: Run security advisories check
+        uses: rustsec/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
