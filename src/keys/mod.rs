@@ -1,6 +1,11 @@
 use bitcoin::XOnlyPublicKey;
 use bitcoin::secp256k1::PublicKey;
 use musig2::KeyAggContext;
+use bdk_wallet::{
+    descriptor::Descriptor,
+    descriptor::DescriptorPublicKey,
+};
+use std::str::FromStr;
 use crate::Error;
 
 /// GiftKeys holds the public keys for the giver and receiver.
@@ -11,19 +16,63 @@ pub struct GiftKeys {
 }
 
 impl GiftKeys {
-    /// Create a new GiftKeys instance.
+    /// Create a new GiftKeys instance from raw public keys.
     pub fn new(giver: PublicKey, receiver: PublicKey) -> Self {
         GiftKeys { giver, receiver }
     }
 
-    /// Derives the giver's public key.
-    pub fn derive_giver_pubkey(&self) -> Result<PublicKey, Error> {
-        Ok(self.giver)
+    /// Create a new GiftKeys instance from descriptor strings
+    pub fn from_descriptors(giver_desc: &str, receiver_desc: &str) -> Result<Self, Error> {
+        // Parse descriptors
+        let giver_descriptor = Descriptor::<DescriptorPublicKey>::from_str(giver_desc)
+            .map_err(|e| Error::KeyError(format!("Failed to parse giver descriptor: {}", e)))?;
+            
+        let receiver_descriptor = Descriptor::<DescriptorPublicKey>::from_str(receiver_desc)
+            .map_err(|e| Error::KeyError(format!("Failed to parse receiver descriptor: {}", e)))?;
+
+        // Use index 0 for both keys
+        let giver_derived = giver_descriptor.at_derivation_index(0)
+            .map_err(|e| Error::KeyError(format!("Failed to derive giver key: {}", e)))?;
+
+        let receiver_derived = receiver_descriptor.at_derivation_index(0)
+            .map_err(|e| Error::KeyError(format!("Failed to derive receiver key: {}", e)))?;
+
+        // Extract x-only public keys from derived scripts
+        let giver_script = giver_derived.script_pubkey();
+        let receiver_script = receiver_derived.script_pubkey();
+
+        // Get the keys from the script (they're the second item in P2TR scripts)
+        let giver_ins = giver_script.as_script().instructions().nth(1)
+            .ok_or_else(|| Error::KeyError("No key in giver script".to_string()))?
+            .map_err(|e| Error::KeyError(format!("Invalid giver script: {}", e)))?;
+        let giver_bytes = giver_ins.push_bytes()
+            .ok_or_else(|| Error::KeyError("No push bytes in giver script".to_string()))?;
+
+        let receiver_ins = receiver_script.as_script().instructions().nth(1)
+            .ok_or_else(|| Error::KeyError("No key in receiver script".to_string()))?
+            .map_err(|e| Error::KeyError(format!("Invalid receiver script: {}", e)))?;
+        let receiver_bytes = receiver_ins.push_bytes()
+            .ok_or_else(|| Error::KeyError("No push bytes in receiver script".to_string()))?;
+
+        // Convert x-only keys to full public keys
+        let giver_xonly = XOnlyPublicKey::from_slice(giver_bytes.as_bytes())
+            .map_err(|e| Error::KeyError(format!("Invalid giver key bytes: {}", e)))?;
+        let receiver_xonly = XOnlyPublicKey::from_slice(receiver_bytes.as_bytes())
+            .map_err(|e| Error::KeyError(format!("Invalid receiver key bytes: {}", e)))?;
+
+        Ok(GiftKeys {
+            giver: giver_xonly.public_key(bitcoin::secp256k1::Parity::Even),
+            receiver: receiver_xonly.public_key(bitcoin::secp256k1::Parity::Even),
+        })
     }
 
-    /// Derives the receiver's public key.
-    pub fn derive_receiver_pubkey(&self) -> Result<PublicKey, Error> {
-        Ok(self.receiver)
+    /// Create a new GiftKeys instance from tpub strings
+    pub fn from_tpubs(giver_tpub: &str, receiver_tpub: &str) -> Result<Self, Error> {
+        // Convert tpubs to descriptors
+        let giver_desc = format!("tr([73c5da0a/86'/1'/0']{}/0/*)", giver_tpub);
+        let receiver_desc = format!("tr([f8e65a0b/86'/1'/0']{}/1/*)", receiver_tpub);
+
+        Self::from_descriptors(&giver_desc, &receiver_desc)
     }
 
     /// Create aggregated MuSig2 key from giver and receiver keys.
@@ -51,7 +100,6 @@ impl GiftKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
 
     #[test]
     fn test_key_creation() {
@@ -81,5 +129,35 @@ mod tests {
             "3b46d262d2f610e9038b44beabdfe97ab5a0feb89870acc2264edfb7f63ec2ec",
             "Aggregated key should match expected value"
         );
+    }
+
+    #[test]
+    fn test_from_descriptors() {
+        const GIVER_DESC: &str = "tr([73c5da0a/86'/1'/0']tpubDCvNAJkUmvjcXrTzyui9M7ehe1EXGkUmF12jTuJ9JxiAmg3tuVgocse3x5zx87WeydqwJWftYkyRQ4d7wF2F5Gs8AdzhJHVXAnMYG9QzmQ6/0/*)";
+        const RECEIVER_DESC: &str = "tr([f8e65a0b/86'/1'/0']tpubDCvNAJkUmvjcXrTzyui9M7ehe1EXGkUmF12jTuJ9JxiAmg3tuVgocse3x5zx87WeydqwJWftYkyRQ4d7wF2F5Gs8AdzhJHVXAnMYG9QzmQ6/1/*)";
+
+        let gift_keys = GiftKeys::from_descriptors(GIVER_DESC, RECEIVER_DESC)
+            .expect("Should create from descriptors");
+        
+        let agg = gift_keys.aggregate_musig2_key()
+            .expect("Should aggregate derived keys");
+
+        // Verify the key format
+        assert_eq!(agg.to_string().len(), 64, "Should be 32-byte hex string");
+    }
+
+    #[test]
+    fn test_from_tpubs() {
+        const GIVER_TPUB: &str = "tpubDCvNAJkUmvjcXrTzyui9M7ehe1EXGkUmF12jTuJ9JxiAmg3tuVgocse3x5zx87WeydqwJWftYkyRQ4d7wF2F5Gs8AdzhJHVXAnMYG9QzmQ6";
+        const RECEIVER_TPUB: &str = "tpubDCvNAJkUmvjcXrTzyui9M7ehe1EXGkUmF12jTuJ9JxiAmg3tuVgocse3x5zx87WeydqwJWftYkyRQ4d7wF2F5Gs8AdzhJHVXAnMYG9QzmQ6";
+
+        let gift_keys = GiftKeys::from_tpubs(GIVER_TPUB, RECEIVER_TPUB)
+            .expect("Should create from tpubs");
+        
+        let agg = gift_keys.aggregate_musig2_key()
+            .expect("Should aggregate derived keys");
+
+        // Verify the key format
+        assert_eq!(agg.to_string().len(), 64, "Should be 32-byte hex string");
     }
 }

@@ -1,57 +1,51 @@
-use bitcoin::secp256k1::{Secp256k1, PublicKey};
-use bitcoin::taproot::TaprootBuilder;
 use bitcoin::ScriptBuf;
-use miniscript::{Miniscript, Tap};
-use crate::error::Error;
+use bitcoin::secp256k1::{PublicKey, Secp256k1};
+use bitcoin::taproot::TaprootBuilder;
+use bitcoin::Address;
+use bitcoin::Network;
 use crate::keys::GiftKeys;
+use crate::Error;
 
 pub struct GiftScript {
-    pub(crate) timelock_blocks: u32,
+    timelock_blocks: u32,
 }
 
 impl GiftScript {
     pub fn new(timelock_blocks: u32) -> Self {
-        Self { timelock_blocks }
+        GiftScript { timelock_blocks }
+    }
+
+    pub fn create_timelock_script(&self, receiver_key: PublicKey) -> Result<ScriptBuf, Error> {
+        // Create a simple script that checks receiver's signature and timelock
+        let script = bitcoin::script::Builder::new()
+            .push_slice(&receiver_key.serialize())
+            .push_opcode(bitcoin::opcodes::all::OP_CHECKSIGVERIFY)
+            .push_int(self.timelock_blocks as i64)
+            .push_opcode(bitcoin::opcodes::all::OP_CSV)
+            .into_script();
+
+        Ok(script.into())
     }
 
     pub fn create_taproot_tree(&self, keys: &GiftKeys) -> Result<ScriptBuf, Error> {
-        let secp = Secp256k1::new();
-        
-        // Get receiver's key for the timelock branch
-        let receiver_pubkey = keys.derive_receiver_pubkey()?;
-        
-        // Create the timelock script
-        let timelock_script = self.create_timelock_script(receiver_pubkey)?;
-
-        // Get aggregated MuSig2 key for internal key
+        // Get the aggregated MuSig2 key for the keypath
         let internal_key = keys.aggregate_musig2_key()?;
         
-        // Build taproot tree with single leaf
-        let tree = TaprootBuilder::new()
-            .add_leaf(0, timelock_script.clone())
-            .map_err(|e| Error::ScriptError(format!("Failed to add leaf: {:?}", e)))?
+        // Create the timelock script for the script path
+        let timelock_script = self.create_timelock_script(keys.receiver)?;
+
+        // Initialize secp context
+        let secp = Secp256k1::new();
+
+        // Build taproot tree with our script
+        let spend_info = TaprootBuilder::new()
+            .add_leaf(0, timelock_script)
+            .map_err(|e| Error::ScriptError(format!("Failed to add script to tree: {:?}", e)))?
             .finalize(&secp, internal_key)
-            .map_err(|e| Error::ScriptError(format!("Failed to build taproot tree: {:?}", e)))?;
+            .map_err(|e| Error::ScriptError(format!("Failed to finalize taproot: {:?}", e)))?;
 
-        // Create P2TR output script
-        Ok(ScriptBuf::new_p2tr(
-            &secp,
-            internal_key,
-            tree.merkle_root()
-        ))
-    }
-
-    /// Create the timelock script using miniscript
-    pub fn create_timelock_script(&self, receiver_key: PublicKey) -> Result<ScriptBuf, Error> {
-        let script = format!(
-            "and_v(v:pk({}),older({}))",
-            receiver_key,
-            self.timelock_blocks
-        );
-
-        let ms = Miniscript::<PublicKey, Tap>::from_str_insane(&script)
-            .map_err(|e| Error::ScriptError(format!("Invalid miniscript: {}", e)))?;
-
-        Ok(ms.encode())
+        // Convert to P2TR address
+        let address = Address::p2tr(&secp, internal_key, spend_info.merkle_root(), Network::Regtest);
+        Ok(address.script_pubkey())
     }
 }
