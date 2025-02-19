@@ -1,19 +1,15 @@
 # MallowBTC
 
-A Rust library for creating timelocked bitcoin gifts using taproot. Enables key-only operations to create taproot addresses with timelock and multi-signature capabilities.
+A Bitcoin gift service that enables creating timelocked bitcoin gifts using taproot. The service combines MuSig2 for cooperative spending with timelock conditions for receiver-only spending after a set period.
 
-## Current Features
+## Features
 
 - Public key operations only (no private keys required)
+- MuSig2 key aggregation for cooperative spending
 - Taproot descriptor support
 - Timelock script generation
+- Command-line interface for gift creation
 - BIP32 key derivation
-- Test harness with regtest support
-
-## Prerequisites
-
-- Rust 1.70 or later
-- Cargo package manager
 
 ## Installation
 
@@ -28,18 +24,33 @@ Build the project:
 cargo build
 ```
 
-## Usage Example
+## Command-Line Usage
+
+Create a new timelocked bitcoin gift:
+```bash
+mallowbtc create --giver-tpub=<TPUB> --receiver-tpub=<TPUB> --timelock=52560
+```
+
+Get help and available commands:
+```bash
+mallowbtc --help
+```
+
+Learn about gift creation requirements:
+```bash
+mallowbtc create
+```
+
+## Library Usage
+
+### Creating a Gift with MuSig2
 
 ```rust
 use mallowbtc::{GiftKeys, GiftScript};
 
-// Create keys with giver's tpub
-let mut keys = GiftKeys::new(
-    "tpubDCvNAJkUmvjcXrTzyui9M7ehe1EXGkUmF12jTuJ9JxiAmg3tuVgocse3x5zx87WeydqwJWftYkyRQ4d7wF2F5Gs8AdzhJHVXAnMYG9QzmQ6"
-).unwrap();
-
-// Add receiver's tpub
-keys.add_receiver(
+// Create keys from tpubs
+let gift_keys = GiftKeys::from_tpubs(
+    "tpubDCvNAJkUmvjcXrTzyui9M7ehe1EXGkUmF12jTuJ9JxiAmg3tuVgocse3x5zx87WeydqwJWftYkyRQ4d7wF2F5Gs8AdzhJHVXAnMYG9QzmQ6",
     "tpubDCvNAJkUmvjcXrTzyui9M7ehe1EXGkUmF12jTuJ9JxiAmg3tuVgocse3x5zx87WeydqwJWftYkyRQ4d7wF2F5Gs8AdzhJHVXAnMYG9QzmQ6"
 ).unwrap();
 
@@ -47,7 +58,7 @@ keys.add_receiver(
 let gift = GiftScript::new(52560); // ~1 year in blocks
 
 // Generate taproot address
-let p2tr_script = gift.create_taproot_tree(&keys).unwrap();
+let p2tr_script = gift.create_taproot_tree(&gift_keys).unwrap();
 let address = bitcoin::Address::from_script(&p2tr_script, bitcoin::Network::Regtest).unwrap();
 println!("Gift address: {}", address);
 ```
@@ -55,23 +66,25 @@ println!("Gift address: {}", address);
 ## API Documentation
 
 ### GiftKeys
-Manages the giver and receiver keys using taproot descriptors:
+Manages gift participant keys and MuSig2 aggregation:
 ```rust
 pub struct GiftKeys {
-    giver_descriptor: Descriptor<DescriptorPublicKey>,
-    receiver_descriptor: Option<Descriptor<DescriptorPublicKey>>,
+    pub giver: PublicKey,
+    pub receiver: PublicKey,
 }
 
 impl GiftKeys {
-    // Create new instance with giver's tpub
-    pub fn new(giver_tpub: &str) -> Result<Self, Error>;
+    // Create new instance from raw public keys
+    pub fn new(giver: PublicKey, receiver: PublicKey) -> Self;
     
-    // Add receiver's tpub
-    pub fn add_receiver(&mut self, receiver_tpub: &str) -> Result<(), Error>;
+    // Create from descriptor strings
+    pub fn from_descriptors(giver_desc: &str, receiver_desc: &str) -> Result<Self, Error>;
     
-    // Derive public keys
-    pub fn derive_giver_pubkey(&self) -> Result<PublicKey, Error>;
-    pub fn derive_receiver_pubkey(&self) -> Result<PublicKey, Error>;
+    // Create from tpub strings
+    pub fn from_tpubs(giver_tpub: &str, receiver_tpub: &str) -> Result<Self, Error>;
+    
+    // Aggregate keys using MuSig2
+    pub fn aggregate_musig2_key(&self) -> Result<XOnlyPublicKey, Error>;
 }
 ```
 
@@ -89,7 +102,7 @@ impl GiftScript {
     // Create taproot output script
     pub fn create_taproot_tree(&self, keys: &GiftKeys) -> Result<ScriptBuf, Error>;
     
-    // Create timelock script using miniscript
+    // Create timelock script for script path
     pub fn create_timelock_script(&self, receiver_key: PublicKey) -> Result<ScriptBuf, Error>;
 }
 ```
@@ -107,10 +120,11 @@ cargo test -- --nocapture
 ```
 
 The test suite includes:
-- Key derivation tests
+- Direct key aggregation tests
+- HD wallet derivation tests
 - Script creation tests
 - Address generation tests
-- Full test harness for regtest
+- Full integration tests
 
 ## Validation
 
@@ -130,12 +144,17 @@ You can verify the library output:
    - Paste the generated script
    - Verify spending conditions
 
-## Current Limitations
+## Current State
 
-1. No transaction creation yet (requires wallet integration)
-2. Fixed key fingerprints in descriptors
-3. Limited path derivation (0/* and 1/*)
-4. No MuSig2 support for cooperative spending
+The project currently supports:
+1. ✅ MuSig2 key aggregation
+2. ✅ Taproot script creation
+3. ✅ CLI interface
+4. ✅ HD wallet integration
+5. ❌ Transaction creation (planned)
+6. ❌ Wallet software integration (planned)
+
+See project-plan.md for detailed status and roadmap.
 
 ## Contributing
 
@@ -151,7 +170,3 @@ cargo fmt
 ## License
 
 [Add your license]
-
-## Project Status
-
-See project-plan.md for current status and roadmap.
