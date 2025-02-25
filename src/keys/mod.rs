@@ -68,9 +68,18 @@ impl GiftKeys {
 
     /// Create a new GiftKeys instance from tpub strings
     pub fn from_tpubs(giver_tpub: &str, receiver_tpub: &str) -> Result<Self, Error> {
-        // Convert tpubs to descriptors
-        let giver_desc = format!("tr([73c5da0a/86'/1'/0']{}/0/*)", giver_tpub);
-        let receiver_desc = format!("tr([f8e65a0b/86'/1'/0']{}/1/*)", receiver_tpub);
+        // Check if the inputs are in the annotated format
+        let giver_desc = if giver_tpub.starts_with("[") {
+            format!("tr({}/0/*)", giver_tpub)
+        } else {
+            format!("tr([73c5da0a/86'/1'/0']{}/0/*)", giver_tpub)
+        };
+        
+        let receiver_desc = if receiver_tpub.starts_with("[") {
+            format!("tr({}/0/*)", receiver_tpub) // Changed to /0/* as both are receiving addresses
+        } else {
+            format!("tr([f8e65a0b/86'/1'/0']{}/0/*)", receiver_tpub) // Changed to /0/* from /1/*
+        };
 
         Self::from_descriptors(&giver_desc, &receiver_desc)
     }
