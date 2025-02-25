@@ -119,18 +119,26 @@ fn create_gift(giver_tpub: &str, receiver_tpub: &str, timelock: u32) -> Result<(
     // Create script with timelock
     let script = GiftScript::new(timelock);
 
-    // Create the taproot output
-    let taproot_script = script.create_taproot_tree(&gift_keys)?;
+    // Create the timelock script for later reference
+    let timelock_script = script.create_timelock_script(gift_keys.receiver)?;
+    
+    // Get the taproot output and spend info
+    let (taproot_script, spend_info) = script.create_taproot_tree(&gift_keys)?;
 
     // Create address from script
     let address = bitcoin::Address::from_script(&taproot_script, bitcoin::Network::Regtest)
         .map_err(|e| Error::ScriptError(format!("Failed to create address: {}", e)))?;
     
-    // Get the timelock script for display
-    let timelock_script = script.create_timelock_script(gift_keys.receiver)?;
-    
     // Get MuSig2 aggregate key
     let internal_key = gift_keys.aggregate_musig2_key()?;
+    
+    // Get control block information
+    let merkle_root = spend_info.merkle_root();
+    // Create control block with the leaf version
+    let leaf_version = bitcoin::taproot::LeafVersion::from_consensus(0xc0)
+        .map_err(|e| Error::ScriptError(format!("Invalid leaf version: {:?}", e)))?;
+    let control_block = spend_info.control_block(&(timelock_script.clone(), leaf_version))
+        .ok_or_else(|| Error::ScriptError("Failed to create control block".to_string()))?;
     
     // Display the results
     println!("\nGift Created Successfully!");
@@ -146,25 +154,32 @@ fn create_gift(giver_tpub: &str, receiver_tpub: &str, timelock: u32) -> Result<(
     println!("Receiver Public Key: {}", gift_keys.receiver);
     
     // Script information
-    println!("\nScript Information for After-Timelock Spending:");
-    println!("---------------------------------------------");
+    println!("\nTaproot Script Information:");
+    println!("-------------------------");
     println!("Timelock Script (hex): {}", hex::encode(timelock_script.as_bytes()));
     println!("Script ASM: {}", timelock_script);
+    println!("Merkle Root: {:?}", merkle_root);
     
-    // Leaf information
-    println!("\nTaproot Details:");
-    println!("--------------");
+    // Control block information
+    println!("\nTapscript Spending Details:");
+    println!("--------------------------");
+    println!("Control Block (hex): {}", hex::encode(control_block.serialize()));
     println!("Leaf Version: 0xc0 (Tapscript)");
     println!("Script position in tree: 0");
     
     // Spending instructions
-    println!("\nTo spend after timelock:");
-    println!("1. Create transaction with input from this address");
-    println!("2. Use the following witness stack:");
-    println!("   - Receiver's signature");
+    println!("\nTo Spend After Timelock:");
+    println!("----------------------");
+    println!("1. Create a transaction spending from this address");
+    println!("2. Set the transaction's nSequence to at least: {}", timelock);
+    println!("3. Witness stack should be (in order):");
+    println!("   - Receiver's signature (schnorr, 64 bytes)");
     println!("   - Timelock script (shown above)");
-    println!("   - Control block with internal key + merkle proof");
-    println!("");
+    println!("   - Control block (shown above)");
+    
+    // Additional information
+    println!("\nKey Usage Information:");
+    println!("--------------------");
     println!("This address uses a Taproot output that enables:");
     println!("1. Cooperative spending between giver and receiver (using MuSig2)");
     println!("2. Receiver-only spending after {} blocks", timelock);
