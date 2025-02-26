@@ -36,50 +36,6 @@ enum Commands {
     },
 }
 
-fn validate_tpub(tpub: &str) -> Result<(), Error> {
-    // Check if it's in the annotated format with fingerprint and path
-    if tpub.starts_with("[") {
-        // Extract the parts
-        let closing_bracket = tpub.find(']')
-            .ok_or_else(|| Error::KeyError("Missing closing bracket in key format".to_string()))?;
-        
-        // Validate the fingerprint/path section
-        let key_info = &tpub[1..closing_bracket];
-        if !key_info.contains('/') {
-            return Err(Error::KeyError("Fingerprint must be followed by derivation path".to_string()));
-        }
-        
-        // Extract the actual tpub
-        let actual_tpub = &tpub[closing_bracket + 1..];
-        if !actual_tpub.starts_with("tpub") {
-            return Err(Error::KeyError("Extended key must start with 'tpub'".to_string()));
-        }
-        
-        // Validate the tpub itself
-        if actual_tpub.len() != 111 {
-            return Err(Error::KeyError("Invalid tpub length".to_string()));
-        }
-        
-        // Try to decode base58
-        base58::decode_check(actual_tpub)
-            .map_err(|e| Error::KeyError(format!("Invalid tpub encoding: {}", e)))?;
-    } else {
-        // Legacy format check
-        if !tpub.starts_with("tpub") {
-            return Err(Error::KeyError("Extended public key must start with 'tpub'".to_string()));
-        }
-
-        if tpub.len() != 111 {
-            return Err(Error::KeyError("Invalid tpub length".to_string()));
-        }
-
-        // Try to decode base58
-        base58::decode_check(tpub)
-            .map_err(|e| Error::KeyError(format!("Invalid tpub encoding: {}", e)))?;
-    }
-
-    Ok(())
-}
 
 fn show_create_requirements() {
     println!("\nTo create a timelocked bitcoin gift, you'll need:");
@@ -104,23 +60,21 @@ fn show_create_requirements() {
     println!("  mallowbtc create --giver-tpub=\"[FINGERPRINT/PATH]TPUB\" --receiver-tpub=\"[FINGERPRINT/PATH]TPUB\" --timelock=52560");
 }
 
-fn create_gift(giver_tpub: &str, receiver_tpub: &str, timelock: u32) -> Result<(), Error> {
-    // Validate inputs
-    validate_tpub(giver_tpub)?;
-    validate_tpub(receiver_tpub)?;
+fn create_gift(giver_pk: &str, receiver_pk: &str, timelock: u32) -> Result<(), Error> {
+    
+    // Create gift keys from tpubs
+    let gift_keys = GiftKeys::from_descriptor_strings(giver_pk, receiver_pk)?;
 
     if timelock < 1 {
         return Err(Error::KeyError("Timelock must be greater than 0".to_string()));
     }
 
-    // Create gift keys from tpubs
-    let gift_keys = GiftKeys::from_tpubs(giver_tpub, receiver_tpub)?;
 
     // Create script with timelock
     let script = GiftScript::new(timelock);
 
     // Create the timelock script for later reference
-    let timelock_script = script.create_timelock_script(gift_keys.receiver)?;
+    let timelock_script = script.create_timelock_script(gift_keys.receiver_x_only_pub()?)?;
     
     // Get the taproot output and spend info
     let (taproot_script, spend_info) = script.create_taproot_tree(&gift_keys)?;
@@ -128,9 +82,7 @@ fn create_gift(giver_tpub: &str, receiver_tpub: &str, timelock: u32) -> Result<(
     // Create address from script
     let address = bitcoin::Address::from_script(&taproot_script, bitcoin::Network::Regtest)
         .map_err(|e| Error::ScriptError(format!("Failed to create address: {}", e)))?;
-    
-    // Get MuSig2 aggregate key
-    let internal_key = gift_keys.aggregate_musig2_key()?;
+
     
     // Get control block information
     let merkle_root = spend_info.merkle_root();
@@ -150,8 +102,8 @@ fn create_gift(giver_tpub: &str, receiver_tpub: &str, timelock: u32) -> Result<(
     // Key information
     println!("\nSpending Information:");
     println!("---------------------");
-    println!("Internal Key (MuSig2 Aggregate): {}", internal_key);
-    println!("Receiver Public Key: {}", gift_keys.receiver);
+    println!("Internal Key (MuSig2 Aggregate): {}", gift_keys.giver_x_only_pub()?);
+    println!("Receiver Public Key: {}", gift_keys.receiver_x_only_pub()?);
     
     // Script information
     println!("\nTaproot Script Information:");
