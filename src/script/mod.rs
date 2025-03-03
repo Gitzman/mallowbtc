@@ -52,4 +52,25 @@ impl GiftScript {
         
         Ok((address.script_pubkey(), spend_info))
     }
+    
+    /// Creates a human-readable descriptor for the gift
+    pub fn create_gift_descriptor(&self, keys: &GiftKeys) -> Result<String, Error> {
+        // Get the giver's key for the keypath
+        let internal_key = keys.giver_x_only_pub()?;
+        
+        // Get the receiver's x-only public key
+        let receiver_key = keys.receiver_x_only_pub()?;
+        
+        // Create a human-readable descriptor string
+        // Note: This is not a valid bitcoin descriptor, just a readable format
+        let desc = format!("tr({},{{pk({}) and after({}) }})", 
+            internal_key, receiver_key, self.timelock_blocks);
+            
+        Ok(desc)
+    }
+    
+    /// Output the script in pseudo-miniscript format
+    pub fn script_policy_format(&self, receiver_key: XOnlyPublicKey) -> String {
+        format!("pk({}) && after({})", receiver_key, self.timelock_blocks)
+    }
 }

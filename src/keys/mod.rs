@@ -1,6 +1,5 @@
 use bitcoin::XOnlyPublicKey;
 use bitcoin::secp256k1::PublicKey;
-use musig2::KeyAggContext;
 use miniscript::descriptor::DescriptorPublicKey;
 use std::str::FromStr;
 use crate::Error;
@@ -14,7 +13,8 @@ pub struct GiftKeys {
 
 impl GiftKeys {
     /// Create a new GiftKeys instance from raw public keys.
-    pub fn new(giver: PublicKey, receiver: PublicKey) -> Self {
+    /// This method is deprecated in favor of descriptor-based initialization.
+    pub fn new(_giver: PublicKey, _receiver: PublicKey) -> Self {
         // Not implemented directly - we're using descriptor-based keys
         unimplemented!("Direct PublicKey initialization is no longer supported. Use from_descriptor_strings instead.")
     }

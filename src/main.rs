@@ -1,5 +1,4 @@
 use clap::{Parser, Subcommand};
-use bitcoin::base58;
 use mallowbtc::{GiftKeys, GiftScript, Error};
 
 /// Mallow Bitcoin - Timelocked Bitcoin Gift Service
@@ -69,9 +68,6 @@ fn create_gift(giver_pk: &str, receiver_pk: &str, timelock: u32) -> Result<(), E
 
     // Create script with timelock
     let script = GiftScript::new(timelock);
-
-    // Create the timelock script for later reference
-    let timelock_script = script.create_timelock_script(gift_keys.receiver_x_only_pub()?)?;
     
     // Get the taproot output and spend info
     let (taproot_script, spend_info) = script.create_taproot_tree(&gift_keys)?;
@@ -79,6 +75,15 @@ fn create_gift(giver_pk: &str, receiver_pk: &str, timelock: u32) -> Result<(), E
     // Create address from script
     let address = bitcoin::Address::from_script(&taproot_script, bitcoin::Network::Regtest)
         .map_err(|e| Error::ScriptError(format!("Failed to create address: {}", e)))?;
+    
+    // Get descriptor string for the gift
+    let descriptor = script.create_gift_descriptor(&gift_keys)?;
+    
+    // Get the timelock script for reference
+    let timelock_script = script.create_timelock_script(gift_keys.receiver_x_only_pub()?)?;
+    
+    // Get the policy format for the script
+    let policy_format = script.script_policy_format(gift_keys.receiver_x_only_pub()?);
     
     // Get control block information
     let merkle_root = spend_info.merkle_root();
@@ -106,7 +111,9 @@ fn create_gift(giver_pk: &str, receiver_pk: &str, timelock: u32) -> Result<(), E
     println!("-------------------------");
     println!("Timelock Script (hex): {}", hex::encode(timelock_script.as_bytes()));
     println!("Script ASM: {}", timelock_script);
+    println!("Policy Format: {}", policy_format);
     println!("Merkle Root: {:?}", merkle_root);
+    println!("Descriptor: {}", descriptor);
     
     // Control block information
     println!("\nTapscript Spending Details:");
@@ -129,8 +136,8 @@ fn create_gift(giver_pk: &str, receiver_pk: &str, timelock: u32) -> Result<(), E
     println!("\nKey Usage Information:");
     println!("--------------------");
     println!("This address uses a Taproot output that enables:");
-    println!("1. Cooperative spending between giver and receiver (using MuSig2)");
-    println!("2. Receiver-only spending after {} blocks", timelock);
+    println!("1. Cooperative spending using the internal key (giver)");
+    println!("2. Receiver-only spending after {} blocks using the script path", timelock);
     println!("");
     println!("Share this address with the giver to receive the gift amount.");
     println!("Keep your wallet's private keys secure - they'll be needed to spend the funds.");
