@@ -36,7 +36,6 @@ enum Commands {
     },
 }
 
-
 fn show_create_requirements() {
     println!("\nTo create a timelocked bitcoin gift, you'll need:");
     println!("1. Giver's Extended Public Key (tpub)");
@@ -61,14 +60,12 @@ fn show_create_requirements() {
 }
 
 fn create_gift(giver_pk: &str, receiver_pk: &str, timelock: u32) -> Result<(), Error> {
-    
-    // Create gift keys from tpubs
+    // Create gift keys from descriptors
     let gift_keys = GiftKeys::from_descriptor_strings(giver_pk, receiver_pk)?;
 
     if timelock < 1 {
         return Err(Error::KeyError("Timelock must be greater than 0".to_string()));
     }
-
 
     // Create script with timelock
     let script = GiftScript::new(timelock);
@@ -82,7 +79,6 @@ fn create_gift(giver_pk: &str, receiver_pk: &str, timelock: u32) -> Result<(), E
     // Create address from script
     let address = bitcoin::Address::from_script(&taproot_script, bitcoin::Network::Regtest)
         .map_err(|e| Error::ScriptError(format!("Failed to create address: {}", e)))?;
-
     
     // Get control block information
     let merkle_root = spend_info.merkle_root();
@@ -102,7 +98,7 @@ fn create_gift(giver_pk: &str, receiver_pk: &str, timelock: u32) -> Result<(), E
     // Key information
     println!("\nSpending Information:");
     println!("---------------------");
-    println!("Internal Key (MuSig2 Aggregate): {}", gift_keys.giver_x_only_pub()?);
+    println!("Internal Key (Giver): {}", gift_keys.giver_x_only_pub()?);
     println!("Receiver Public Key: {}", gift_keys.receiver_x_only_pub()?);
     
     // Script information
