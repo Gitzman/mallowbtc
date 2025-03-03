@@ -1,5 +1,5 @@
 use bitcoin::{ScriptBuf, XOnlyPublicKey};
-use bitcoin::secp256k1::{PublicKey, Secp256k1};
+use bitcoin::secp256k1::Secp256k1;
 use bitcoin::taproot::TaprootBuilder;
 use bitcoin::Address;
 use bitcoin::Network;
@@ -28,28 +28,28 @@ impl GiftScript {
     }
 
     pub fn create_taproot_tree(&self, keys: &GiftKeys) -> Result<(ScriptBuf, bitcoin::taproot::TaprootSpendInfo), Error> {
-    // Get the aggregated MuSig2 key for the keypath
-    let internal_key = keys.giver_x_only_pub()?;
-    
-    // Get the receiver's x-only public key and unwrap the Result
-    let receiver_key = keys.receiver_x_only_pub()?;
-    
-    // Create the timelock script for the script path
-    let timelock_script = self.create_timelock_script(receiver_key)?;
+        // Get the giver's key for the keypath
+        let internal_key = keys.giver_x_only_pub()?;
+        
+        // Get the receiver's x-only public key
+        let receiver_key = keys.receiver_x_only_pub()?;
+        
+        // Create the timelock script for the script path
+        let timelock_script = self.create_timelock_script(receiver_key)?;
 
-    // Initialize secp context
-    let secp = Secp256k1::new();
+        // Initialize secp context
+        let secp = Secp256k1::new();
 
-    // Build taproot tree with our script
-    let spend_info = TaprootBuilder::new()
-        .add_leaf(0, timelock_script.clone())
-        .map_err(|e| Error::ScriptError(format!("Failed to add script to tree: {:?}", e)))?
-        .finalize(&secp, internal_key)
-        .map_err(|e| Error::ScriptError(format!("Failed to finalize taproot: {:?}", e)))?;
+        // Build taproot tree with our script
+        let spend_info = TaprootBuilder::new()
+            .add_leaf(0, timelock_script.clone())
+            .map_err(|e| Error::ScriptError(format!("Failed to add script to tree: {:?}", e)))?
+            .finalize(&secp, internal_key)
+            .map_err(|e| Error::ScriptError(format!("Failed to finalize taproot: {:?}", e)))?;
 
-    // Convert to P2TR address
-    let address = Address::p2tr(&secp, internal_key, spend_info.merkle_root(), Network::Regtest);
-    
-    Ok((address.script_pubkey(), spend_info))
-}
+        // Convert to P2TR address
+        let address = Address::p2tr(&secp, internal_key, spend_info.merkle_root(), Network::Regtest);
+        
+        Ok((address.script_pubkey(), spend_info))
+    }
 }
